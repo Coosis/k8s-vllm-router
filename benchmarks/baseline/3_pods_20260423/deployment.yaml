@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai-cpu:v0.19.1-arm64
+          args:
+            # uncomment this
+            # - --model
+            # - Qwen/Qwen2.5-0.5B-Instruct
+
+            # comment the following line
+            - /models/Qwen2.5-0.5B-Instruct
+
+            - --served-model-name
+            - Qwen/Qwen2.5-0.5B-Instruct
+
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --dtype
+            - half
+            - --max-model-len
+            - "2048"
+
+          # comment out `volumeMounts` block
+          volumeMounts:
+            - name: modeldir
+              mountPath: /models
+              readOnly: true
+
+          ports:
+            - containerPort: 8000
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hftoken
+                  key: token
+            - name: VLLM_CPU_KVCACHE_SPACE
+              value: "3"
+
+      # comment out this block
+      volumes:
+        - name: modeldir
+          hostPath:
+            path: /mnt/models
+            type: Directory

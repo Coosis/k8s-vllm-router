@@ -1,0 +1,11 @@
+*.bin
+bin/
+.direnv
+.env
+stubs/
+typings/
+grafana
+prometheus/data
+models
+.ruff_cache
+**/__pycache__/
