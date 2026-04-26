@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Coosis/k8s-vllm-router/internal/backend"
+	"github.com/Coosis/k8s-vllm-router/internal/config"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -30,6 +31,7 @@ func TestBackendStateInflightCounter(t *testing.T) {
 }
 
 func TestCacheAwareColdSelectionsRotateAcrossBackends(t *testing.T) {
+	matcher := NewMatcher(config.NewExpiryConfig())
 	r, err := New(Options{
 		Policy: "cache_aware",
 		Backends: []backend.Endpoint{
@@ -38,9 +40,12 @@ func TestCacheAwareColdSelectionsRotateAcrossBackends(t *testing.T) {
 			{ID: "pod-c", URL: "http://pod-c"},
 		},
 		Register: prometheus.NewRegistry(),
-	})
+	}, matcher)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, state := range r.backends.Load().List {
+		state.Healthy.Store(true)
 	}
 
 	seen := map[string]bool{}

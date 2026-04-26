@@ -17,6 +17,13 @@ type Recorder struct {
 	BackendLatencyEWMA *prometheus.GaugeVec
 	BackendErrorEWMA   *prometheus.GaugeVec
 
+	BackendHealthy *prometheus.GaugeVec
+
+	PrefixCandidateMatches *prometheus.CounterVec
+	PrefixMatchWarmth      *prometheus.HistogramVec
+	PrefixMatchAgeSeconds  *prometheus.HistogramVec
+	PrefixEvictions        prometheus.Counter
+
 	RoutingDecisions *prometheus.CounterVec
 }
 
@@ -48,6 +55,30 @@ func NewRecorder(reg prometheus.Registerer) *Recorder {
 			Help: "Router-observed backend error EWMA.",
 		}, []string{"backend"}),
 
+		BackendHealthy: promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
+			Name: "router_backend_healthy",
+			Help: "Whether the backend is currently healthy (1) or unhealthy (0).",
+		}, []string{"backend"}),
+
+		PrefixCandidateMatches: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
+			Name: "router_prefix_candidate_matches_total",
+			Help: "Total prefix candidate matches by matched prefix length.",
+		}, []string{"match_length"}),
+		PrefixMatchWarmth: promauto.With(reg).NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "router_prefix_match_warmth",
+			Help:    "Decay-adjusted prefix match warmth used for routing.",
+			Buckets: []float64{1, 8, 16, 32, 64, 128, 256, 512, 1024},
+		}, []string{"match_length"}),
+		PrefixMatchAgeSeconds: promauto.With(reg).NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "router_prefix_match_age_seconds",
+			Help:    "Age of prefix candidate metadata used for routing.",
+			Buckets: []float64{1, 5, 10, 30, 60, 300, 600, 1800, 3600},
+		}, []string{"match_length"}),
+		PrefixEvictions: promauto.With(reg).NewCounter(prometheus.CounterOpts{
+			Name: "router_prefix_metadata_evictions_total",
+			Help: "Total stale prefix metadata entries evicted opportunistically.",
+		}),
+
 		RoutingDecisions: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
 			Name: "router_routing_decisions_total",
 			Help: "Total routing decisions by policy.",
@@ -61,5 +92,6 @@ func (r *Recorder) InitBackend(backend string) {
 	r.BackendRequests.WithLabelValues(backend).Add(0)
 	r.BackendErrors.WithLabelValues(backend).Add(0)
 	r.BackendLatencyEWMA.WithLabelValues(backend).Set(0)
+	r.BackendHealthy.WithLabelValues(backend).Set(0)
 	r.BackendErrorEWMA.WithLabelValues(backend).Set(0)
 }

@@ -6,21 +6,30 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 )
 
 type HTTPClient struct {
-	client *http.Client
+	client     *http.Client
+	healthPath string
 }
 
-func NewHTTPClient() *HTTPClient {
+func NewHTTPClient(healthPath string) *HTTPClient {
+	if healthPath == "" {
+		healthPath = "/healthz"
+	}
+	if !strings.HasPrefix(healthPath, "/") {
+		healthPath = "/" + healthPath
+	}
 	return &HTTPClient{
-		client: &http.Client{Timeout: 5 * time.Second},
+		client:     &http.Client{Timeout: 5 * time.Second},
+		healthPath: healthPath,
 	}
 }
 
 func (c *HTTPClient) Health(ctx context.Context, endpoint Endpoint) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.URL+"/healthz", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.URL+c.healthPath, nil)
 	if err != nil {
 		return err
 	}

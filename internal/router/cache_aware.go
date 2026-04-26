@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/Coosis/k8s-vllm-router/internal/backend"
 	fingerprint "github.com/Coosis/k8s-vllm-router/internal/prefix"
@@ -19,7 +20,7 @@ var (
 const (
 	PREFIX_MATCH_WEIGHT float64 = 150
 	INFLIGHT_WEIGHT     float64 = 10
-	LATENCY_WEIGHT      float64 = 1.5 
+	LATENCY_WEIGHT      float64 = 1.5
 	ERROR_WEIGHT        float64 = 50
 )
 
@@ -37,18 +38,30 @@ func (r *Router) cacheAwareSelect(
 	selected := fallback
 	maxScore := fallbackScore
 
-	for backendID, matchLength := range r.matcher.CandidateMatches(prints) {
+	candidateResult := r.matcher.CandidateMatches(prints)
+	if candidateResult.Evictions > 0 {
+		r.metric.PrefixEvictions.Add(float64(candidateResult.Evictions))
+	}
+	for backendID, candidateMatch := range candidateResult.Matches {
+		matchLength := strconv.Itoa(candidateMatch.MatchLength)
+		r.metric.PrefixCandidateMatches.WithLabelValues(matchLength).Inc()
+		r.metric.PrefixMatchWarmth.WithLabelValues(matchLength).Observe(candidateMatch.Warmth)
+		r.metric.PrefixMatchAgeSeconds.WithLabelValues(matchLength).Observe(candidateMatch.Age.Seconds())
+
 		endpoint := snapshot.ByID[backendID]
-		if endpoint == nil {
+		if !isSelectable(endpoint) {
 			continue
 		}
-		score := scoreBackend(endpoint, matchLength)
+		score := scoreBackend(endpoint, float64(candidateMatch.Warmth))
 		if score > maxScore {
 			maxScore = score
 			selected = endpoint
 		}
 	}
 
+	if selected == nil {
+		return nil, nil, ErrNoHealthyBackends
+	}
 	return selected, prints, nil
 }
 
@@ -57,6 +70,9 @@ func loadAwareFallback(snapshot *backend.BackendSnapshot, start int) (*backend.B
 	var selected *backend.BackendState
 	for i := range snapshot.List {
 		endpoint := snapshot.List[(start+i)%len(snapshot.List)]
+		if !isSelectable(endpoint) {
+			continue
+		}
 		score := scoreBackend(endpoint, 0)
 		if score > maxScore {
 			maxScore = score
@@ -72,8 +88,8 @@ func loadAwareFallback(snapshot *backend.BackendSnapshot, start int) (*backend.B
 // - latency_weight      * latency
 // - error_weight        * error
 
-func scoreBackend(endpoint *backend.BackendState, matchLength int) float64 {
-	return PREFIX_MATCH_WEIGHT*float64(matchLength) -
+func scoreBackend(endpoint *backend.BackendState, matchScore float64) float64 {
+	return PREFIX_MATCH_WEIGHT*matchScore -
 		INFLIGHT_WEIGHT*float64(endpoint.Inflight.Load()) -
 		LATENCY_WEIGHT*endpoint.LatencyEWMA.Get() -
 		ERROR_WEIGHT*endpoint.ErrorEWMA.Get()

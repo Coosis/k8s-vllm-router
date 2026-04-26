@@ -16,25 +16,32 @@ import (
 )
 
 type Options struct {
-	Policy   string
-	Backends []backend.Endpoint
-	Logger   *slog.Logger
-	Register prometheus.Registerer
+	Policy                        string
+	Backends                      []backend.Endpoint
+	BackendHealthPath             string
+	BackendHealthTimeout          time.Duration
+	BackendHealthFailureThreshold uint64
+	Logger                        *slog.Logger
+	Register                      prometheus.Registerer
 }
 
 type Router struct {
-	policy   string
-	backends *atomic.Pointer[backend.BackendSnapshot]
-	client   backend.Client
-	logger   *slog.Logger
-	metric   *metrics.Recorder
+	policy                 string
+	backends               *atomic.Pointer[backend.BackendSnapshot]
+	client                 backend.Client
+	logger                 *slog.Logger
+	metric                 *metrics.Recorder
+	healthTimeout          time.Duration
+	healthFailureThreshold uint64
 
 	matcher *Matcher
 
 	next atomic.Uint64
 }
 
-func New(opts Options) (*Router, error) {
+var ErrNoHealthyBackends = errors.New("no healthy backends")
+
+func New(opts Options, matcher *Matcher) (*Router, error) {
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -58,14 +65,31 @@ func New(opts Options) (*Router, error) {
 	}
 
 	return &Router{
-		policy:   opts.Policy,
-		backends: snapshot,
-		client:   backend.NewHTTPClient(),
-		logger:   logger,
-		metric:   recorder,
+		policy:                 opts.Policy,
+		backends:               snapshot,
+		client:                 backend.NewHTTPClient(opts.BackendHealthPath),
+		logger:                 logger,
+		metric:                 recorder,
+		healthTimeout:          normalizedDuration(opts.BackendHealthTimeout, 5*time.Second),
+		healthFailureThreshold: normalizedUint64(opts.BackendHealthFailureThreshold, 3),
 
-		matcher: NewMatcher(),
+		matcher: matcher,
 	}, nil
+}
+
+func (r *Router) UpdateBackends(endpoints []backend.Endpoint) {
+	current := r.backends.Load()
+	nextStates := make([]*backend.BackendState, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if existing := current.ByID[endpoint.ID]; existing != nil && existing.Endpoint == endpoint {
+			nextStates = append(nextStates, existing)
+		} else {
+			nextStates = append(nextStates, backend.NewBackendState(endpoint))
+			r.metric.InitBackend(endpoint.ID)
+		}
+	}
+	r.backends.Store(backend.NewBackendSnapshot(nextStates))
+	r.logger.Info("backend snapshot updated", "count", len(nextStates))
 }
 
 func (r *Router) Ready(ctx context.Context) bool {
@@ -133,6 +157,76 @@ func (r *Router) selectBackend(req *http.Request) (*backend.BackendState, []pref
 		return r.cacheAwareSelect(req, snapshot)
 	}
 
-	backend := snapshot.List[(r.next.Add(1)-1)%uint64(len(snapshot.List))]
-	return backend, nil, nil
+	start := int(r.next.Add(1) - 1)
+	for i := range snapshot.List {
+		backend := snapshot.List[(start+i)%len(snapshot.List)]
+		if isSelectable(backend) {
+			return backend, nil, nil
+		}
+	}
+	return nil, nil, ErrNoHealthyBackends
+}
+
+func (r *Router) StartHealthCheck(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		r.checkBackendsHealth(ctx)
+		for {
+			select {
+			case <-ticker.C:
+				r.checkBackendsHealth(ctx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (r *Router) checkBackendsHealth(ctx context.Context) {
+	snapshot := r.backends.Load()
+	for _, backend := range snapshot.List {
+		ckctx, cancel := context.WithTimeout(ctx, r.healthTimeout)
+		err := r.client.Health(ckctx, backend.Endpoint)
+		cancel()
+
+		if err == nil {
+			backend.ConsecutiveHealthFailures.Store(0)
+			backend.Healthy.Store(true)
+			r.metric.BackendHealthy.WithLabelValues(backend.Endpoint.ID).Set(1)
+			continue
+		}
+
+		failures := backend.ConsecutiveHealthFailures.Add(1)
+		r.logger.Warn(
+			"backend health check failed",
+			"backend", backend.Endpoint.ID,
+			"url", backend.Endpoint.URL,
+			"failures", failures,
+			"threshold", r.healthFailureThreshold,
+			"error", err,
+		)
+		if failures >= r.healthFailureThreshold {
+			backend.Healthy.Store(false)
+			r.metric.BackendHealthy.WithLabelValues(backend.Endpoint.ID).Set(0)
+		}
+	}
+}
+
+func isSelectable(backend *backend.BackendState) bool {
+	return backend != nil && backend.Healthy.Load()
+}
+
+func normalizedDuration(value time.Duration, fallback time.Duration) time.Duration {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func normalizedUint64(value uint64, fallback uint64) uint64 {
+	if value == 0 {
+		return fallback
+	}
+	return value
 }

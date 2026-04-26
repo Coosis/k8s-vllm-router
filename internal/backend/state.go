@@ -9,8 +9,9 @@ import (
 type BackendState struct {
 	Endpoint Endpoint
 
-	Inflight *atomic.Int64
-	Healthy  *atomic.Bool
+	Inflight                  *atomic.Int64
+	Healthy                   *atomic.Bool
+	ConsecutiveHealthFailures *atomic.Uint64
 
 	RequestsTotal *atomic.Uint64
 	ErrorsTotal   *atomic.Uint64
@@ -25,6 +26,8 @@ func NewBackendState(endpoint Endpoint) *BackendState {
 	inflight.Store(0)
 	healthy := &atomic.Bool{}
 	healthy.Store(false)
+	healthFailures := &atomic.Uint64{}
+	healthFailures.Store(0)
 	request := &atomic.Uint64{}
 	request.Store(0)
 	errors := &atomic.Uint64{}
@@ -34,8 +37,9 @@ func NewBackendState(endpoint Endpoint) *BackendState {
 	return &BackendState{
 		Endpoint: endpoint,
 
-		Inflight: inflight,
-		Healthy:  healthy,
+		Inflight:                  inflight,
+		Healthy:                   healthy,
+		ConsecutiveHealthFailures: healthFailures,
 
 		RequestsTotal: request,
 		ErrorsTotal:   errors,
