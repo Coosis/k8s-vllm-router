@@ -1,5 +1,7 @@
 # k8s-vLLM Router
 
+[![CI](https://github.com/Coosis/k8s-vllm-router/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Coosis/k8s-vllm-router/actions/workflows/ci.yml)
+
 `k8s-vllm-router` is a Kubernetes-native OpenAI-compatible router for vLLM.
 
 It keeps the normal Kubernetes operating model: pods, Services, health checks, rolling updates, and EndpointSlice discovery. The part Kubernetes does not know is vLLM KV-cache locality. If requests with the same long prefix are randomly balanced across pods, each vLLM process warms its own partial cache and the shared-prefix benefit is diluted.
