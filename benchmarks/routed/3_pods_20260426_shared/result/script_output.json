@@ -1,0 +1,15 @@
+{
+  "n": 100,
+  "concurrency": 8,
+  "shared": true,
+  "num_common_prefixes": 32,
+  "attempted": 100,
+  "succeeded": 100,
+  "failed": 0,
+  "ttft_p50_ms": 315.42883394286036,
+  "ttft_p95_ms": 6946.206584107131,
+  "lat_p50_ms": 4097.1088339574635,
+  "lat_p95_ms": 12348.10583340004,
+  "ttft_mean_ms": 1880.5427358439192,
+  "lat_mean_ms": 5639.5449541462585
+}

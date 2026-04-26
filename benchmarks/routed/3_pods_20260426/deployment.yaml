@@ -1,0 +1,171 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai-cpu:v0.19.1-arm64
+          args:
+            # uncomment this
+            # - --model
+            # - Qwen/Qwen2.5-0.5B-Instruct
+
+            # comment the following line
+            - /models/Qwen2.5-0.5B-Instruct
+
+            - --served-model-name
+            - Qwen/Qwen2.5-0.5B-Instruct
+
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --dtype
+            - half
+            - --max-model-len
+            - "2048"
+
+          # comment out `volumeMounts` block
+          volumeMounts:
+            - name: modeldir
+              mountPath: /models
+              readOnly: true
+
+          ports:
+            - containerPort: 8000
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hftoken
+                  key: token
+            - name: VLLM_CPU_KVCACHE_SPACE
+              value: "3"
+
+      # comment out this block
+      volumes:
+        - name: modeldir
+          hostPath:
+            path: /mnt/models
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+spec:
+  type: NodePort
+  selector:
+    app: vllm
+  ports:
+    - protocol: TCP
+      port: 8976
+      targetPort: 8000
+      nodePort: 30976
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-vllm-router-config
+data:
+  ROUTER_POLICY: cache_aware
+  DISCOVERY_SERVICE: vllm-service
+  DISCOVERY_SCHEME: http
+  DISCOVERY_INTERVAL: 5s
+  HEALTH_CHECK_INTERVAL: 5s
+  BACKEND_HEALTH_TIMEOUT: 5s
+  BACKEND_HEALTH_FAILURE_THRESHOLD: "3"
+  BACKEND_HEALTH_PATH: /health
+  PREFIX_MAX_AGE: "180"
+  DECAY_HALF_LIFE: 90s
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-vllm-router
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-vllm-router
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-vllm-router
+subjects:
+  - kind: ServiceAccount
+    name: k8s-vllm-router
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-vllm-router
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-vllm-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-vllm-router
+  template:
+    metadata:
+      labels:
+        app: k8s-vllm-router
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: k8s-vllm-router
+      containers:
+        - name: router
+          image: docker.io/coosis/k8s-vllm-router:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: k8s-vllm-router-config
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-vllm-router
+spec:
+  type: NodePort
+  selector:
+    app: k8s-vllm-router
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 31080
