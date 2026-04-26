@@ -60,8 +60,8 @@ spec:
       serviceAccountName: k8s-vllm-router
       containers:
         - name: router
-          image: docker.io/coosis/k8s-vllm-router:dev
-          imagePullPolicy: Never
+          image: docker.io/coosis/k8s-vllm-router:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           envFrom:
