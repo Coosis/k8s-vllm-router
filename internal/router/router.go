@@ -102,10 +102,11 @@ func (r *Router) Ready(ctx context.Context) bool {
 	return false
 }
 
-func (r *Router) Forward(w http.ResponseWriter, req *http.Request) error {
+// Forward returns whether a response has already been written.
+func (r *Router) Forward(w http.ResponseWriter, req *http.Request) (bool, error) {
 	endpoint, prints, release, err := r.selectAndReserveBackend(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer release()
 	r.logger.Info("selected backend", "backend", endpoint.Endpoint.ID, "policy", r.policy, "inflight", endpoint.Inflight.Load())
@@ -115,7 +116,7 @@ func (r *Router) Forward(w http.ResponseWriter, req *http.Request) error {
 	r.metric.BackendInflight.WithLabelValues(endpoint.Endpoint.ID).Set(float64(endpoint.Inflight.Load()))
 	r.metric.RoutingDecisions.WithLabelValues(r.policy).Inc()
 	start := time.Now()
-	err = r.client.Forward(w, req, endpoint.Endpoint)
+	written, err := r.client.Forward(w, req, endpoint.Endpoint)
 	elapsed := time.Since(start)
 	endpoint.RequestsTotal.Add(1)
 	endpoint.LatencyEWMA.Observe(float64(elapsed.Milliseconds()))
@@ -129,7 +130,7 @@ func (r *Router) Forward(w http.ResponseWriter, req *http.Request) error {
 	}
 	r.metric.BackendErrorEWMA.WithLabelValues(endpoint.Endpoint.ID).Set(endpoint.ErrorEWMA.Get())
 	r.metric.BackendLatencyEWMA.WithLabelValues(endpoint.Endpoint.ID).Set(endpoint.LatencyEWMA.Get())
-	return err
+	return written, err
 }
 
 func (r *Router) selectAndReserveBackend(req *http.Request) (*backend.BackendState, []prefix.Fingerprint, func(), error) {

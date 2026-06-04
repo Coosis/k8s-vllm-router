@@ -46,9 +46,11 @@ func forward(rt *router.Router, logger *slog.Logger) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if err := rt.Forward(w, r); err != nil {
+		if written, err := rt.Forward(w, r); err != nil {
 			logger.Error("request forwarding failed", "error", err)
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			if !written {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+			}
 		}
 	}
 }

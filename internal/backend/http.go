@@ -44,15 +44,17 @@ func (c *HTTPClient) Health(ctx context.Context, endpoint Endpoint) error {
 	return nil
 }
 
-func (c *HTTPClient) Forward(w http.ResponseWriter, r *http.Request, endpoint Endpoint) error {
+func (c *HTTPClient) Forward(w http.ResponseWriter, r *http.Request, endpoint Endpoint) (bool, error) {
 	target, err := url.Parse(endpoint.URL)
 	if err != nil {
-		return err
+		return false, err
 	}
+	var proxyErr error
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		proxyErr = err
 		http.Error(w, err.Error(), http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(w, r)
-	return nil
+	return true, proxyErr
 }

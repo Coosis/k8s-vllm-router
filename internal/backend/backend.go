@@ -12,5 +12,5 @@ type Endpoint struct {
 
 type Client interface {
 	Health(ctx context.Context, endpoint Endpoint) error
-	Forward(w http.ResponseWriter, r *http.Request, endpoint Endpoint) error
+	Forward(w http.ResponseWriter, r *http.Request, endpoint Endpoint) (bool, error)
 }

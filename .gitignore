@@ -10,3 +10,4 @@ models
 .ruff_cache
 **/__pycache__/
 build/
+.gocache
